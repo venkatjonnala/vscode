@@ -7,7 +7,7 @@
 
 import 'vs/css!./quickInput';
 import { Component } from 'vs/workbench/common/component';
-import { IQuickInputService, IPickOpenEntry, IPickOptions, IInputOptions, IQuickNavigateConfiguration, PickOneParameters, PickManyParameters, TextInputParameters, InputResult, InputParameters } from 'vs/platform/quickinput/common/quickInput';
+import { IQuickInputService, IQuickPickItem, IPickOptions, IInputOptions, IQuickNavigateConfiguration, PickOneParameters, PickManyParameters, TextInputParameters, InputResult, InputParameters, IQuickPick, IQuickInput, IQuickInputCommand, IInputBox } from 'vs/platform/quickinput/common/quickInput';
 import { IPartService } from 'vs/workbench/services/part/common/partService';
 import * as dom from 'vs/base/browser/dom';
 import { IInstantiationService } from 'vs/platform/instantiation/common/instantiation';
@@ -28,7 +28,7 @@ import { CountBadge } from 'vs/base/browser/ui/countBadge/countBadge';
 import { attachBadgeStyler, attachProgressBarStyler, attachButtonStyler } from 'vs/platform/theme/common/styler';
 import { IEnvironmentService } from 'vs/platform/environment/common/environment';
 import { ProgressBar } from 'vs/base/browser/ui/progressbar/progressbar';
-import { chain, debounceEvent } from 'vs/base/common/event';
+import { chain, debounceEvent, Emitter } from 'vs/base/common/event';
 import { Button } from 'vs/base/browser/ui/button/button';
 import { dispose, IDisposable } from 'vs/base/common/lifecycle';
 import { onUnexpectedError, canceled } from 'vs/base/common/errors';
@@ -46,6 +46,7 @@ interface QuickInputUI {
 	inputBox: QuickInputBox;
 	count: CountBadge;
 	message: HTMLElement;
+	progressBar: ProgressBar;
 	list: QuickInputList;
 	close: (ok?: true | Thenable<never>) => void;
 }
@@ -57,7 +58,7 @@ interface InputController<R> {
 	readonly resolve: (ok?: true | Thenable<never>) => void | TPromise<void>;
 }
 
-class PickOneController<T extends IPickOpenEntry> implements InputController<T> {
+class PickOneController<T extends IQuickPickItem> implements InputController<T> {
 	public showUI = { inputBox: true, list: true };
 	public result: TPromise<T>;
 	public ready: TPromise<void>;
@@ -166,7 +167,7 @@ class PickOneController<T extends IPickOpenEntry> implements InputController<T> 
 	}
 }
 
-class PickManyController<T extends IPickOpenEntry> implements InputController<T[]> {
+class PickManyController<T extends IQuickPickItem> implements InputController<T[]> {
 	public showUI = { checkAll: true, inputBox: true, count: true, ok: true, list: true };
 	public result: TPromise<T[]>;
 	public ready: TPromise<void>;
@@ -323,7 +324,6 @@ export class QuickInputService extends Component implements IQuickInputService {
 	private okContainer: HTMLElement;
 	private ui: QuickInputUI;
 	private ready = false;
-	private progressBar: ProgressBar;
 	private ignoreFocusLost = false;
 	private inQuickOpenWidgets: Record<string, boolean> = {};
 	private inQuickOpenContext: IContextKey<boolean>;
@@ -408,9 +408,9 @@ export class QuickInputService extends Component implements IQuickInputService {
 
 		const message = dom.append(container, $('.quick-input-message'));
 
-		this.progressBar = new ProgressBar(container);
-		dom.addClass(this.progressBar.getContainer(), 'quick-input-progress');
-		this.toUnbind.push(attachProgressBarStyler(this.progressBar, this.themeService));
+		const progressBar = new ProgressBar(container);
+		dom.addClass(progressBar.getContainer(), 'quick-input-progress');
+		this.toUnbind.push(attachProgressBarStyler(progressBar, this.themeService));
 
 		const list = this.instantiationService.createInstance(QuickInputList, container);
 		this.toUnbind.push(list);
@@ -485,7 +485,7 @@ export class QuickInputService extends Component implements IQuickInputService {
 
 		this.toUnbind.push(this.quickOpenService.onShow(() => this.close()));
 
-		this.ui = { container, checkAll, inputBox, count, message, list, close: ok => this.close(ok) };
+		this.ui = { container, checkAll, inputBox, count, message, progressBar, list, close: ok => this.close(ok) };
 		this.updateStyles();
 	}
 
@@ -516,7 +516,7 @@ export class QuickInputService extends Component implements IQuickInputService {
 		return TPromise.as(undefined);
 	}
 
-	pick<T extends IPickOpenEntry, O extends IPickOptions>(picks: TPromise<T[]>, options: O = <O>{}, token?: CancellationToken): TPromise<O extends { canPickMany: true } ? T[] : T> {
+	pick<T extends IQuickPickItem, O extends IPickOptions>(picks: TPromise<T[]>, options: O = <O>{}, token?: CancellationToken): TPromise<O extends { canPickMany: true } ? T[] : T> {
 		return <any>this.show(<any>{
 			type: options.canPickMany ? 'pickMany' : 'pickOne',
 			picks,
@@ -540,6 +540,14 @@ export class QuickInputService extends Component implements IQuickInputService {
 		}, token);
 	}
 
+	createQuickPick(): IQuickPick {
+		return new QuickPick(this.ui);
+	}
+
+	createInputBox(): IInputBox {
+		return new InputBox(this.ui);
+	}
+
 	show<P extends InputParameters>(parameters: P, token: CancellationToken = CancellationToken.None): TPromise<InputResult<P>> {
 		this.create();
 		this.quickOpenService.close();
@@ -551,7 +559,7 @@ export class QuickInputService extends Component implements IQuickInputService {
 
 		this.ignoreFocusLost = parameters.ignoreFocusLost;
 
-		this.progressBar.stop();
+		this.ui.progressBar.stop();
 		this.ready = false;
 
 		this.controller = this.createController(parameters);
@@ -578,7 +586,7 @@ export class QuickInputService extends Component implements IQuickInputService {
 		const delay = TPromise.timeout(800);
 		delay.then(() => {
 			if (this.controller === wasController) {
-				this.progressBar.infinite();
+				this.ui.progressBar.infinite();
 			}
 		}, () => { /* ignore */ });
 
@@ -588,7 +596,7 @@ export class QuickInputService extends Component implements IQuickInputService {
 				return;
 			}
 
-			this.progressBar.stop();
+			this.ui.progressBar.stop();
 			this.ready = true;
 
 			this.updateLayout();
@@ -689,3 +697,267 @@ export const QuickPickManyToggle: ICommandAndKeybindingRule = {
 		quickInputService.toggle();
 	}
 };
+
+class QuickInput implements IQuickInput {
+
+	protected visible = false;
+	private _enabled = true;
+	private _busy = false;
+	private onDidHideEmitter = new Emitter<void>();
+
+	protected visibleDisposables: IDisposable[] = [];
+	protected disposables: IDisposable[] = [];
+
+	private busyDelay: TPromise<void>;
+
+	constructor(protected ui: QuickInputUI) {
+		this.disposables.push(this.onDidHideEmitter);
+	}
+
+	get enabled() {
+		return this._enabled;
+	}
+
+	set enabled(enabled: boolean) {
+		this._enabled = enabled;
+		this.update(); // TODO
+	}
+
+	get busy() {
+		return this._busy;
+	}
+
+	set busy(busy: boolean) {
+		this._busy = busy;
+		this.update();
+	}
+
+	show(): void {
+		this.visible = true;
+		this.update();
+	}
+
+	hide(): void {
+		this.visible = false;
+		this.visibleDisposables = dispose(this.visibleDisposables);
+		this.update();
+	}
+
+	onDidHide = this.onDidHideEmitter.event;
+
+	protected update() {
+		if (this.visible && this.busy && !this.busyDelay) {
+			this.busyDelay = TPromise.timeout(800);
+			this.busyDelay.then(() => {
+				this.ui.progressBar.infinite();
+			}, () => { /* ignore */ });
+		}
+		if (!(this.visible && this.busy) && this.busyDelay) {
+			this.ui.progressBar.stop();
+			this.busyDelay.cancel();
+			this.busyDelay = null;
+		}
+	}
+
+	public dispose(): void {
+		this.hide();
+		this.disposables = dispose(this.disposables);
+	}
+}
+
+class QuickPick extends QuickInput implements IQuickPick {
+
+	private _value = '';
+	private _placeholder: string;
+	private _onDidValueChangeEmitter = new Emitter<string>();
+	private _onDidAcceptEmitter = new Emitter<string>();
+	private _commands: IQuickInputCommand[] = [];
+	private _onDidTriggerCommandEmitter = new Emitter<IQuickInputCommand>();
+	private _items: IQuickPickItem[] = [];
+	private _handlesToItems = new Map<number, IQuickPickItem>();
+	private _canSelectMany = false;
+	private _builtInFilter = true;
+	private _focusedItems: IQuickPickItem[] = [];
+	private _onDidFocusChangeEmitter = new Emitter<IQuickPickItem[]>();
+	private _selectedItems: IQuickPickItem[] = [];
+	private _onDidSelectionChangeEmitter = new Emitter<IQuickPickItem[]>();
+
+	constructor(ui: QuickInputUI) {
+		super(ui);
+	}
+
+	get value() {
+		return this._value;
+	}
+
+	set value(value: string) {
+		this._value = value;
+		this.update();
+	}
+
+	get placeholder() {
+		return this._placeholder;
+	}
+
+	set placeholder(placeholder: string) {
+		this._placeholder = placeholder;
+		this.update({ placeholder });
+	}
+
+	onDidValueChange = this._onDidValueChangeEmitter.event;
+
+	onDidAccept = this._onDidAcceptEmitter.event;
+
+	get commands() {
+		return this._commands;
+	}
+
+	set commands(commands: IQuickInputCommand[]) {
+		this._commands = commands;
+		this.update({ commands });
+	}
+
+	onDidTriggerCommand = this._onDidTriggerCommandEmitter.event;
+
+	get items() {
+		return this._items;
+	}
+
+	set items(items: IQuickPickItem[]) {
+		this._items = items;
+		this._handlesToItems.clear();
+		items.forEach((item, i) => {
+			this._handlesToItems.set(i, item);
+		});
+		this.update({
+			items: items.map((item, i) => ({
+				label: item.label,
+				description: item.description,
+				handle: i,
+				detail: item.detail,
+				picked: item.picked
+			}))
+		});
+	}
+
+	get canSelectMany() {
+		return this._canSelectMany;
+	}
+
+	set canSelectMany(canSelectMany: boolean) {
+		this._canSelectMany = canSelectMany;
+		this.update({ canSelectMany });
+	}
+
+	get builtInFilter() {
+		return this._builtInFilter;
+	}
+
+	set builtInFilter(builtInFilter: boolean) {
+		this._builtInFilter = builtInFilter;
+		this.update({ builtInFilter });
+	}
+
+	get focusedItems() {
+		return this._focusedItems;
+	}
+
+	onDidFocusChange = this._onDidFocusChangeEmitter.event;
+
+	get selectedItems() {
+		return this._selectedItems;
+	}
+
+	onDidSelectionChange = this._onDidSelectionChangeEmitter.event;
+
+	protected show() {
+		if (!this.visible) {
+			this.visibleDisposables.push(this.ui.inputBox.onDidChange(value => this._onDidValueChangeEmitter.fire(value)));
+		}
+		super.show();
+	}
+
+	protected update() {
+		super.update();
+		if (this.visible && this.ui.inputBox.value !== this.value) {
+			this.ui.inputBox.value = this.value;
+		}
+	}
+}
+
+class InputBox extends QuickInput implements IInputBox {
+
+	private _value = '';
+	private _placeholder: string;
+	private _password: boolean;
+	private _prompt: string;
+	private _validationMessage: string;
+	private _onDidValueChangeEmitter = new Emitter<string>();
+	private _onDidAcceptEmitter = new Emitter<string>();
+	private _commands: IQuickInputCommand[] = [];
+	private _onDidTriggerCommandEmitter = new Emitter<IQuickInputCommand>();
+
+	constructor(ui: QuickInputUI) {
+		super(ui);
+	}
+
+	get value() {
+		return this._value;
+	}
+
+	set value(value: string) {
+		this._value = value;
+		this.update({ value });
+	}
+
+	get placeholder() {
+		return this._placeholder;
+	}
+
+	set placeholder(placeholder: string) {
+		this._placeholder = placeholder;
+		this.update({ placeholder });
+	}
+
+	get password() {
+		return this._password;
+	}
+
+	set password(password: boolean) {
+		this._password = password;
+		this.update({ password });
+	}
+
+	get prompt() {
+		return this._prompt;
+	}
+
+	set prompt(prompt: string) {
+		this._prompt = prompt;
+		this.update({ prompt });
+	}
+
+	get validationMessage() {
+		return this._validationMessage;
+	}
+
+	set validationMessage(validationMessage: string) {
+		this._validationMessage = validationMessage;
+		this.update({ validationMessage });
+	}
+
+	onDidValueChange = this._onDidValueChangeEmitter.event;
+
+	onDidAccept = this._onDidAcceptEmitter.event;
+
+	get commands() {
+		return this._commands;
+	}
+
+	set commands(commands: IQuickInputCommand[]) {
+		this._commands = commands;
+		this.update({ commands });
+	}
+
+	onDidTriggerCommand = this._onDidTriggerCommandEmitter.event;
+}

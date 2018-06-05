@@ -8,8 +8,11 @@ import { createDecorator } from 'vs/platform/instantiation/common/instantiation'
 import { TPromise } from 'vs/base/common/winjs.base';
 import { CancellationToken } from 'vs/base/common/cancellation';
 import { ResolvedKeybinding } from 'vs/base/common/keyCodes';
+import URI from 'vs/base/common/uri';
+import { ThemeIcon } from 'vs/platform/theme/common/themeService';
+import { Event } from 'vs/base/common/event';
 
-export interface IPickOpenEntry {
+export interface IQuickPickItem {
 	id?: string;
 	label: string;
 	description?: string;
@@ -84,6 +87,76 @@ export interface IInputOptions {
 	validateInput?: (input: string) => TPromise<string>;
 }
 
+export interface IQuickInput {
+
+	enabled: boolean;
+
+	busy: boolean;
+
+	show(): void;
+
+	hide(): void;
+
+	onDidHide: Event<void>;
+
+	dispose(): void;
+}
+
+export interface IQuickPick extends IQuickInput {
+
+	value: string;
+
+	placeholder: string;
+
+	readonly onDidValueChange: Event<string>;
+
+	readonly onDidAccept: Event<string>;
+
+	commands: ReadonlyArray<IQuickInputCommand>;
+
+	readonly onDidTriggerCommand: Event<IQuickInputCommand>;
+
+	items: ReadonlyArray<IQuickPickItem>;
+
+	canSelectMany: boolean;
+
+	builtInFilter: boolean;
+
+	readonly focusedItems: ReadonlyArray<IQuickPickItem>;
+
+	readonly onDidFocusChange: Event<IQuickPickItem[]>;
+
+	readonly selectedItems: ReadonlyArray<IQuickPickItem>;
+
+	readonly onDidSelectionChange: Event<IQuickPickItem[]>;
+}
+
+export interface IInputBox extends IQuickInput {
+
+	value: string;
+
+	placeholder: string;
+
+	password: boolean;
+
+	readonly onDidValueChange: Event<string>;
+
+	readonly onDidAccept: Event<string>;
+
+	commands: ReadonlyArray<IQuickInputCommand>;
+
+	readonly onDidTriggerCommand: Event<IQuickInputCommand>;
+
+	prompt: string;
+
+	validationMessage: string;
+}
+
+export interface IQuickInputCommand {
+	iconPath: string | URI | { light: string | URI; dark: string | URI } | ThemeIcon;
+	tooltip?: string | undefined;
+}
+
 export type InputParameters = PickOneParameters | PickManyParameters | TextInputParameters;
 
 export type InputResult<P extends InputParameters> =
@@ -97,7 +170,7 @@ export interface BaseInputParameters {
 	readonly ignoreFocusLost?: boolean;
 }
 
-export interface PickParameters<T extends IPickOpenEntry = IPickOpenEntry> extends BaseInputParameters {
+export interface PickParameters<T extends IQuickPickItem = IQuickPickItem> extends BaseInputParameters {
 	readonly type: 'pickOne' | 'pickMany';
 	readonly picks: TPromise<T[]>;
 	readonly matchOnDescription?: boolean;
@@ -105,11 +178,11 @@ export interface PickParameters<T extends IPickOpenEntry = IPickOpenEntry> exten
 	readonly placeHolder?: string;
 }
 
-export interface PickOneParameters<T extends IPickOpenEntry = IPickOpenEntry> extends PickParameters<T> {
+export interface PickOneParameters<T extends IQuickPickItem = IQuickPickItem> extends PickParameters<T> {
 	readonly type: 'pickOne';
 }
 
-export interface PickManyParameters<T extends IPickOpenEntry = IPickOpenEntry> extends PickParameters<T> {
+export interface PickManyParameters<T extends IQuickPickItem = IQuickPickItem> extends PickParameters<T> {
 	readonly type: 'pickMany';
 }
 
@@ -132,12 +205,15 @@ export interface IQuickInputService {
 	/**
 	 * Opens the quick input box for selecting items and returns a promise with the user selected item(s) if any.
 	 */
-	pick<T extends IPickOpenEntry, O extends IPickOptions>(picks: TPromise<T[]>, options?: O, token?: CancellationToken): TPromise<O extends { canPickMany: true } ? T[] : T>;
+	pick<T extends IQuickPickItem, O extends IPickOptions>(picks: TPromise<T[]>, options?: O, token?: CancellationToken): TPromise<O extends { canPickMany: true } ? T[] : T>;
 
 	/**
 	 * Opens the quick input box for text input and returns a promise with the user typed value if any.
 	 */
 	input(options?: IInputOptions, token?: CancellationToken): TPromise<string>;
+
+	createQuickPick(): IQuickPick;
+	createInputBox(): IInputBox;
 
 	show<P extends InputParameters>(parameters: P, token?: CancellationToken): TPromise<InputResult<P>>;
 
