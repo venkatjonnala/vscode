@@ -33,3 +33,5 @@ var ToggleText = React.createClass({
 });
 
 React.render(<ToggleText default="World" alt="Mars" />, document.body);
+
+//updates required
